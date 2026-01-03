@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Juego de lanzar y traer</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: linear-gradient(to bottom, #87CEEB 0%, #B0E0E6 100%);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            touch-action: none; 
+            cursor: grab; 
+        }
+
+        body:active {
+            cursor: grabbing;
+        }
+
+        #gameCanvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        .instructions {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: rgba(255, 255, 255, 0.9);
+            padding: 12px 24px;
+            border-radius: 30px;
+            pointer-events: none;
+            color: #333;
+            font-weight: bold;
+            font-size: 1.1rem;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.15);
+            text-align: center;
+            border: 2px solid #D2B48C;
+            opacity: 1;
+            transition: opacity 0.5s;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="inst" class="instructions">✋ Lanza el hueso lejos y el perro te lo traerá</div>
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const inst = document.getElementById('inst');
+
+        let width, height;
+        let particles = []; 
+        let ripples = []; // Ondas de agua
+
+        const state = {
+            dog: { 
+                x: 0, y: 0, 
+                size: 1.2, 
+                speed: 6, 
+                flip: false, 
+                yOffset: 0, 
+                hopTimer: 0, 
+                isMoving: false,
+                isSwimming: false,
+                wasSwimming: false, // Para detectar el momento de entrada
+                sinkFactor: 0, // Para transición suave de hundimiento (0 a 1)
+                mode: 'IDLE' 
+            },
+            ball: { x: 0, y: 0, vx: 0, vy: 0, size: 40 },
+            mouse: { x: 0, y: 0 }, 
+            isDragging: false,
+            
+            // Lógica del mensaje secreto
+            throwCount: 0,
+            secretMode: {
+                active: false,
+                timer: 0,
+                alpha: 0
+            }
+        };
+
+        function resize() {
+            width = window.innerWidth;
+            height = window.innerHeight;
+            canvas.width = width;
+            canvas.height = height;
+        }
+
+        window.addEventListener('resize', resize);
+        resize();
+
+        // Posiciones iniciales
+        state.dog.x = width / 2;
+        state.dog.y = height * 0.7;
+        state.ball.x = width / 2 + 50;
+        state.ball.y = height * 0.7 + 50;
+        state.mouse.x = width / 2;
+        state.mouse.y = height * 0.8;
+
+        // --- INTERACCIÓN ---
+        function updateMouse(e) {
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            state.mouse.x = clientX;
+            state.mouse.y = clientY;
+
+            if (state.isDragging) {
+                state.ball.vx = (clientX - state.ball.x) * 0.2;
+                state.ball.vy = (clientY - state.ball.y) * 0.2;
+                state.ball.x = clientX;
+                state.ball.y = clientY;
+            }
+        }
+
+        // Event Listeners
+        const startDrag = (e) => {
+            if (state.secretMode.active) return; // No interactuar durante el mensaje
+            
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            const dx = clientX - state.ball.x;
+            const dy = clientY - state.ball.y;
+            
+            if (Math.sqrt(dx*dx + dy*dy) < 80) {
+                state.isDragging = true;
+                state.dog.mode = 'IDLE'; 
+            }
+            updateMouse(e);
+        };
+
+        window.addEventListener('mousedown', startDrag);
+        window.addEventListener('touchstart', startDrag, {passive: false});
+        
+        window.addEventListener('mousemove', updateMouse);
+        window.addEventListener('touchmove', (e) => { e.preventDefault(); updateMouse(e); }, {passive: false});
+
+        const endDrag = () => { 
+            if (state.isDragging) {
+                state.isDragging = false; 
+                state.dog.mode = 'CHASING';
+                
+                // Limitar velocidad
+                state.ball.vx = Math.max(-25, Math.min(25, state.ball.vx));
+                state.ball.vy = Math.max(-25, Math.min(25, state.ball.vy));
+
+                // --- CONTADOR DE LANZAMIENTOS ---
+                state.throwCount++;
+                if (state.throwCount === 3) {
+                    // Activar secreto
+                    state.secretMode.active = true;
+                    state.secretMode.timer = 180; // ~3 segundos a 60fps
+                    state.secretMode.alpha = 0;
+                    state.throwCount = 0; // Resetear para que vuelva a salir a la 6ta vez (o dejarlo para que sea cíclico)
+                    inst.style.opacity = 0; // Ocultar instrucciones
+                }
+            }
+        };
+        window.addEventListener('mouseup', endDrag);
+        window.addEventListener('touchend', endDrag);
+
+        // --- CLASES Y DIBUJO ---
+
+        class Ripple {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.size = 1;
+                this.life = 1.0;
+            }
+            update() {
+                this.size += 2; // Expansión
+                this.life -= 0.02; // Desvanecer
+            }
+            draw(ctx) {
+                ctx.strokeStyle = `rgba(255, 255, 255, ${this.life * 0.5})`;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.ellipse(this.x, this.y, this.size * 2, this.size, 0, 0, Math.PI*2);
+                ctx.stroke();
+            }
+        }
+
+        class Particle {
+            constructor(x, y, type = 'emotion') {
+                this.x = x;
+                this.y = y;
+                this.type = type;
+                this.life = 1.0;
+                
+                if (type === 'water') {
+                    // Gotas de agua (salpicadura)
+                    this.vx = (Math.random() - 0.5) * 8;
+                    this.vy = -Math.random() * 5 - 2;
+                    this.radius = Math.random() * 3 + 1;
+                    this.color = '#E0F7FA';
+                } else {
+                    // Emociones
+                    this.vx = (Math.random() - 0.5) * 4;
+                    this.vy = -Math.random() * 4 - 2;
+                    this.text = ['❤️', '🦴', 'Buen chico!'][Math.floor(Math.random() * 3)];
+                }
+            }
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.life -= 0.03;
+                if(this.type === 'water') {
+                    this.vy += 0.25; // Gravedad
+                    this.life -= 0.01; // Duran un poco menos
+                }
+            }
+            draw(ctx) {
+                ctx.globalAlpha = Math.max(0, this.life);
+                if (this.type === 'water') {
+                    ctx.fillStyle = this.color;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.radius, 0, Math.PI*2);
+                    ctx.fill();
+                } else {
+                    ctx.font = 'bold 20px Arial';
+                    ctx.fillStyle = '#000';
+                    ctx.fillText(this.text, this.x, this.y);
+                }
+                ctx.globalAlpha = 1.0;
+            }
+        }
+
+        function drawGermanShepherd(ctx, scale, runCycle, isMoving, isSwimming, hasBone, sinkFactor) {
+            ctx.save();
+            ctx.scale(scale, scale);
+
+            const tanColor = '#C69C6D'; 
+            const blackColor = '#2F2F2F';
+            const cycleSpeed = isSwimming ? 0.5 : 1;
+            
+            // Patas: Si se está hundiendo, reducimos el movimiento de las patas visualmente
+            const legAmp = isMoving ? 0.8 : 0;
+            const legSwing = Math.sin(runCycle * cycleSpeed) * legAmp; 
+            const legSwing2 = Math.sin(runCycle * cycleSpeed + Math.PI) * legAmp;
+
+            // Función auxiliar para patas
+            function drawLeg(x, y, angle, color) {
+                ctx.save();
+                ctx.translate(x, y);
+                // Si nada, las patas rotan para "remar" (transición suave con sinkFactor)
+                const swimRotation = (Math.PI / 4) * sinkFactor; 
+                ctx.rotate(angle + swimRotation);
+                
+                ctx.fillStyle = color;
+                // Muslo
+                ctx.beginPath();
+                ctx.ellipse(0, 10, 8, 18, 0, 0, Math.PI * 2);
+                ctx.fill();
+                // Pata inferior
+                ctx.beginPath();
+                ctx.translate(0, 25);
+                ctx.rotate(isMoving ? -Math.abs(angle)*0.5 : 0); 
+                ctx.ellipse(0, 5, 6, 12, 0, 0, Math.PI * 2);
+                ctx.fill();
+                // Pie
+                ctx.beginPath();
+                ctx.fillStyle = blackColor;
+                ctx.ellipse(3, 15, 6, 4, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+
+            // Cola
+            const tailWag = Math.sin(runCycle * 4) * 0.4;
+            ctx.save();
+            ctx.translate(-35, -5);
+            // Transición de ángulo de cola al nadar
+            const tailBaseAngle = -0.5 * (1 - sinkFactor) + (-0.2 * sinkFactor);
+            ctx.rotate(tailBaseAngle + (isMoving ? tailWag : 0));
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.quadraticCurveTo(-20, 10, -40, 5);
+            ctx.quadraticCurveTo(-20, -10, 0, -5);
+            ctx.fillStyle = blackColor;
+            ctx.fill();
+            ctx.restore();
+
+            // Patas traseras (Lejanas)
+            drawLeg(-25, 5, legSwing2, tanColor);
+            // Patas delanteras (Lejanas)
+            drawLeg(25, 5, legSwing, tanColor);
+
+            // Cuerpo
+            ctx.save();
+            // Inclinación del cuerpo al nadar
+            ctx.rotate(-0.1 * sinkFactor);
+            ctx.beginPath();
+            ctx.ellipse(0, -5, 40, 22, 0, 0, Math.PI * 2);
+            ctx.fillStyle = tanColor;
+            ctx.fill();
+            // Silla negra
+            ctx.beginPath();
+            ctx.ellipse(0, -12, 30, 15, 0, 0, Math.PI * 2);
+            ctx.fillStyle = blackColor;
+            ctx.fill();
+
+            // Cabeza
+            ctx.save();
+            ctx.translate(35, -20); 
+            // Levantar cabeza al nadar
+            const headAngle = -0.2 * (1 - sinkFactor) + (-0.5 * sinkFactor);
+            ctx.rotate(headAngle); 
+            
+            // Cuello
+            ctx.beginPath();
+            ctx.moveTo(-10, 10);
+            ctx.lineTo(-5, -15);
+            ctx.lineTo(15, -15);
+            ctx.lineTo(15, 10);
+            ctx.fillStyle = tanColor;
+            ctx.fill();
+            // Cráneo
+            ctx.beginPath();
+            ctx.arc(5, -15, 18, 0, Math.PI*2);
+            ctx.fillStyle = tanColor;
+            ctx.fill();
+            // Orejas
+            ctx.beginPath();
+            ctx.moveTo(-5, -25); ctx.lineTo(-2, -45); ctx.lineTo(10, -28); ctx.fill();
+            ctx.beginPath();
+            ctx.moveTo(5, -28); ctx.lineTo(15, -45); ctx.lineTo(18, -25); ctx.fill();
+            ctx.fillStyle = '#444'; 
+            ctx.beginPath();
+            ctx.moveTo(0, -28); ctx.lineTo(-2, -40); ctx.lineTo(5, -30); ctx.fill();
+            // Hocico
+            ctx.fillStyle = blackColor;
+            ctx.beginPath();
+            ctx.moveTo(15, -15); ctx.lineTo(32, -12); ctx.lineTo(30, -5); ctx.lineTo(15, -5); ctx.fill();
+            ctx.fillStyle = '#000';
+            ctx.beginPath();
+            ctx.arc(32, -14, 3, 0, Math.PI*2); ctx.fill();
+            // Ojo
+            ctx.fillStyle = 'white';
+            ctx.beginPath(); ctx.arc(12, -20, 4, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = 'black';
+            ctx.beginPath(); ctx.arc(13, -20, 1.5, 0, Math.PI*2); ctx.fill();
+
+            // HUESO EN LA BOCA
+            if (hasBone) {
+                ctx.save();
+                ctx.translate(25, -8); 
+                ctx.rotate(0.2);
+                ctx.font = '30px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('🦴', 0, 0);
+                ctx.restore();
+            }
+
+            ctx.restore(); // Fin cabeza
+            ctx.restore(); // Fin cuerpo
+
+            // Patas traseras (Cercanas)
+            drawLeg(-25, 5, legSwing, tanColor);
+            // Patas delanteras (Cercanas)
+            drawLeg(25, 5, legSwing2, tanColor);
+            
+            ctx.restore();
+        }
+
+        // --- BUCLE PRINCIPAL ---
+
+        function update() {
+            // --- LÓGICA DEL MENSAJE SECRETO ---
+            if (state.secretMode.active) {
+                // Fade in
+                if (state.secretMode.alpha < 1) state.secretMode.alpha += 0.05;
+                state.secretMode.timer--;
+                
+                // Cuando acaba el tiempo
+                if (state.secretMode.timer <= 0) {
+                    // Fade out
+                    state.secretMode.active = false; // Desactivar lógica
+                    // El alpha bajará visualmente en el draw si lo manejamos allí,
+                    // pero para simplificar, cortamos aquí y restauramos UI
+                    inst.style.opacity = 1;
+                }
+                return; // PAUSAR EL JUEGO MIENTRAS SALE EL MENSAJE
+            }
+
+            const skyLine = height * 0.3;   
+            const sandLine = height * 0.6;  
+
+            // --- FÍSICA BOLA ---
+            if (!state.isDragging && state.dog.mode !== 'RETURNING') {
+                state.ball.x += state.ball.vx;
+                state.ball.y += state.ball.vy;
+
+                if (state.ball.x < state.ball.size || state.ball.x > width - state.ball.size) {
+                    state.ball.vx *= -0.7;
+                    state.ball.x = Math.max(state.ball.size, Math.min(state.ball.x, width - state.ball.size));
+                }
+                if (state.ball.y < skyLine + state.ball.size/2) {
+                    state.ball.vy *= -0.7;
+                    state.ball.y = skyLine + state.ball.size/2;
+                } else if (state.ball.y > height - state.ball.size) {
+                    state.ball.vy *= -0.7;
+                    state.ball.y = height - state.ball.size;
+                }
+                
+                let friction = 0.98;
+                if (state.ball.y < sandLine) friction = 0.94; 
+                state.ball.vx *= friction;
+                state.ball.vy *= friction;
+
+                if (Math.abs(state.ball.vx) < 0.1) state.ball.vx = 0;
+                if (Math.abs(state.ball.vy) < 0.1) state.ball.vy = 0;
+            }
+
+            // --- IA PERRO ---
+            // Detectar estado de natación
+            const inWater = state.dog.y < sandLine;
+            state.dog.isSwimming = inWater;
+
+            // Transición suave de hundimiento (sinkFactor)
+            // Si está en agua, factor tiende a 1, si no a 0
+            if (inWater) {
+                if (state.dog.sinkFactor < 1) state.dog.sinkFactor += 0.05;
+            } else {
+                if (state.dog.sinkFactor > 0) state.dog.sinkFactor -= 0.05;
+            }
+
+            // DETECCIÓN DE ENTRADA AL AGUA (CHAPUZÓN)
+            if (inWater && !state.dog.wasSwimming) {
+                // Acaba de entrar -> Splash!
+                for(let i=0; i<10; i++) particles.push(new Particle(state.dog.x, state.dog.y + 20, 'water'));
+                ripples.push(new Ripple(state.dog.x, state.dog.y + 20));
+            }
+            state.dog.wasSwimming = inWater;
+
+            // Generar ondas periódicas si nada
+            if (inWater && state.dog.isMoving && Math.floor(Date.now() / 100) % 5 === 0) {
+                 ripples.push(new Ripple(state.dog.x, state.dog.y + 15));
+            }
+
+
+            let targetX = state.dog.x;
+            let targetY = state.dog.y;
+
+            if (state.dog.mode === 'CHASING') {
+                targetX = state.ball.x;
+                targetY = state.ball.y;
+                if (Math.hypot(state.ball.x - state.dog.x, state.ball.y - state.dog.y) < 40) {
+                    state.dog.mode = 'RETURNING';
+                    particles.push(new Particle(state.dog.x, state.dog.y - 30));
+                }
+            }
+            else if (state.dog.mode === 'RETURNING') {
+                targetX = state.mouse.x;
+                targetY = state.mouse.y;
+                state.ball.x = state.dog.x; 
+                state.ball.y = state.dog.y; 
+                if (Math.hypot(state.mouse.x - state.dog.x, state.mouse.y - state.dog.y) < 60) {
+                    state.dog.mode = 'IDLE';
+                    state.ball.x = state.dog.x;
+                    state.ball.y = state.dog.y + 20; 
+                    state.ball.vx = 0;
+                    state.ball.vy = 0;
+                    particles.push(new Particle(state.dog.x, state.dog.y - 40, 'heart'));
+                }
+            }
+            else { // IDLE
+                const distToMaster = Math.hypot(state.mouse.x - state.dog.x, state.mouse.y - state.dog.y);
+                if (distToMaster > 150) {
+                     targetX = state.mouse.x;
+                     targetY = state.mouse.y;
+                } else {
+                    targetX = state.dog.x; 
+                    targetY = state.dog.y;
+                    if (state.isDragging) state.dog.flip = state.ball.x < state.dog.x;
+                    else state.dog.flip = state.mouse.x < state.dog.x;
+                }
+            }
+
+            const dx = targetX - state.dog.x;
+            const dy = targetY - state.dog.y;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+
+            if (dist > 10) {
+                state.dog.isMoving = true;
+                const angle = Math.atan2(dy, dx);
+                let speed = state.dog.speed;
+                if (state.dog.mode === 'IDLE') speed *= 0.3; 
+                if (inWater) speed *= 0.6;      
+                
+                state.dog.x += Math.cos(angle) * speed;
+                state.dog.y += Math.sin(angle) * speed;
+
+                if (state.dog.y < skyLine + 20) state.dog.y = skyLine + 20;
+                if (state.dog.y > height - 20) state.dog.y = height - 20;
+
+                state.dog.hopTimer += 0.2;
+                
+                // Animación de saltito interpolada por sinkFactor
+                // En tierra (-10 amp), en agua (2 amp suave)
+                const waterBounce = Math.sin(state.dog.hopTimer) * 2;
+                const landBounce = Math.abs(Math.sin(state.dog.hopTimer)) * -10;
+                state.dog.yOffset = landBounce * (1 - state.dog.sinkFactor) + waterBounce * state.dog.sinkFactor;
+
+                state.dog.flip = dx < 0;
+
+                // Salpicaduras al moverse en agua
+                if (inWater && Math.random() < 0.2) {
+                    particles.push(new Particle(state.dog.x, state.dog.y + 20, 'water'));
+                }
+            } else {
+                state.dog.isMoving = false;
+                state.dog.yOffset = 0;
+                state.dog.hopTimer = 0;
+            }
+
+            // Update efectos
+            particles.forEach((p, i) => {
+                p.update();
+                if(p.life <= 0) particles.splice(i,1);
+            });
+            ripples.forEach((r, i) => {
+                r.update();
+                if(r.life <= 0) ripples.splice(i,1);
+            });
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, width, height);
+
+            // --- PAISAJE ---
+            const skyLine = height * 0.3;
+            const sandLine = height * 0.6;
+
+            const seaGrad = ctx.createLinearGradient(0, skyLine, 0, sandLine);
+            seaGrad.addColorStop(0, '#1E90FF'); seaGrad.addColorStop(1, '#00BFFF'); 
+            ctx.fillStyle = seaGrad; ctx.fillRect(0, skyLine, width, sandLine - skyLine);
+            
+            ctx.beginPath(); ctx.moveTo(0, skyLine); ctx.lineTo(width, skyLine);
+            ctx.strokeStyle = '#1874CD'; ctx.lineWidth = 2; ctx.stroke();
+            
+            const sandGrad = ctx.createLinearGradient(0, sandLine, 0, height);
+            sandGrad.addColorStop(0, '#F4A460'); sandGrad.addColorStop(1, '#F0E68C'); 
+            ctx.fillStyle = sandGrad; ctx.fillRect(0, sandLine, width, height - sandLine);
+            
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+            ctx.beginPath();
+            for(let i=0; i<width; i+=20) ctx.arc(i, sandLine, 10, 0, Math.PI*2);
+            ctx.fill();
+            
+            ctx.save();
+            ctx.fillStyle = '#FFD700'; ctx.shadowColor = '#FFA500'; ctx.shadowBlur = 20;
+            ctx.beginPath(); ctx.arc(width - 80, 80, 40, 0, Math.PI * 2); ctx.fill();
+            ctx.restore();
+
+            // Sombra (se desvanece si sinkFactor aumenta)
+            ctx.fillStyle = `rgba(0,0,0,${0.15 * (1 - state.dog.sinkFactor)})`; 
+            ctx.beginPath(); ctx.ellipse(state.dog.x, state.dog.y + 35, 40, 10, 0, 0, Math.PI*2); ctx.fill();
+            
+            // Ondas de agua (Debajo del perro)
+            ripples.forEach(r => r.draw(ctx));
+
+            // --- PERRO ---
+            ctx.save();
+            // Offset visual de hundimiento interpolado
+            // En tierra 0, en agua +15
+            let sinkY = 15 * state.dog.sinkFactor;
+            let drawY = state.dog.y + state.dog.yOffset + sinkY;
+
+            ctx.translate(state.dog.x, drawY);
+            if (state.dog.flip) ctx.scale(-1, 1);
+            
+            const hasBone = state.dog.mode === 'RETURNING';
+            drawGermanShepherd(ctx, state.dog.size, state.dog.hopTimer, state.dog.isMoving, state.dog.isSwimming, hasBone, state.dog.sinkFactor);
+            ctx.restore();
+
+            // Agua (Overlay Mejorado) - Interpolado
+            if (state.dog.sinkFactor > 0.05) {
+                ctx.save();
+                
+                // 1. CLIP: Asegurar que el agua NUNCA toque la arena
+                // Definimos la región permitida (solo el mar, de 0 a sandLine)
+                ctx.beginPath();
+                ctx.rect(0, 0, width, sandLine);
+                ctx.clip();
+
+                ctx.globalAlpha = state.dog.sinkFactor; 
+
+                // 2. GRADIENTE: Simular profundidad (transparente arriba -> azul oscuro abajo)
+                // El gradiente es relativo a la posición del perro
+                const waterGrad = ctx.createLinearGradient(0, state.dog.y - 10, 0, state.dog.y + 40);
+                waterGrad.addColorStop(0, 'rgba(30, 144, 255, 0.0)'); // Arriba transparente
+                waterGrad.addColorStop(0.4, 'rgba(30, 144, 255, 0.3)'); // Medio azulado
+                waterGrad.addColorStop(1, 'rgba(0, 60, 150, 0.6)');    // Fondo oscuro (profundidad)
+
+                ctx.fillStyle = waterGrad;
+
+                // 3. FORMA: Elipse en lugar de rectangulo
+                ctx.beginPath();
+                // Una elipse que cubre la parte sumergida del cuerpo
+                ctx.ellipse(state.dog.x, state.dog.y + 15, 55, 35, 0, 0, Math.PI*2);
+                ctx.fill();
+
+                // Anillo de corte agua/cuerpo (Ondas de superficie)
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)'; 
+                ctx.lineWidth = 2;
+                ctx.beginPath(); 
+                // Arco suave alrededor del cuerpo
+                ctx.ellipse(state.dog.x, state.dog.y + 15, 50, 12, 0, 0, Math.PI*2); 
+                ctx.stroke();
+
+                ctx.restore(); // Restaurar para quitar el clip y seguir dibujando normal
+            }
+
+            // --- HUESO (SUELTO) ---
+            if (state.dog.mode !== 'RETURNING') {
+                ctx.save();
+                ctx.translate(state.ball.x, state.ball.y);
+                // Hundimiento hueso
+                if (state.ball.y < sandLine) {
+                     ctx.fillStyle = 'rgba(30, 144, 255, 0.3)';
+                     ctx.beginPath(); ctx.ellipse(0, 10, state.ball.size/2 + 5, 10, 0, 0, Math.PI*2); ctx.fill();
+                } else {
+                     ctx.fillStyle = 'rgba(0,0,0,0.15)';
+                     ctx.beginPath(); ctx.ellipse(0, state.ball.size/2 + 5, state.ball.size/2, 10, 0, 0, Math.PI*2); ctx.fill();
+                }
+                ctx.font = `${state.ball.size}px Arial`;
+                ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                ctx.fillText('🦴', 0, 0);
+                ctx.restore();
+            }
+
+            particles.forEach(p => p.draw(ctx));
+
+            // --- DIBUJO MENSAJE SECRETO (NEGRO Y BLANCO) ---
+            if (state.secretMode.active || state.secretMode.alpha > 0) {
+                // Si ya no está activo pero alpha > 0, es que estamos en fade out
+                if (!state.secretMode.active && state.secretMode.alpha > 0) state.secretMode.alpha -= 0.05;
+
+                ctx.save();
+                ctx.globalAlpha = state.secretMode.alpha;
+                
+                // Fondo oscuro
+                ctx.fillStyle = 'rgba(0,0,0,0.9)';
+                ctx.fillRect(0, 0, width, height);
+                
+                // Configuración de Texto
+                ctx.font = 'italic bold 70px "Times New Roman", serif'; 
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                
+                // 1. Borde Blanco (Para resaltar el negro)
+                ctx.lineWidth = 4;
+                ctx.strokeStyle = '#FFFFFF';
+                ctx.strokeText("Mi-e dor de tine", width/2, height/2);
+
+                // 2. Relleno Negro
+                ctx.fillStyle = '#000000'; 
+                ctx.fillText("Mi-e dor de tine", width/2, height/2);
+                
+                ctx.restore();
+            }
+
+            requestAnimationFrame(updateAndDraw);
+        }
+
+        function updateAndDraw() {
+            update();
+            draw();
+        }
+
+        updateAndDraw();
+
+    </script>
+</body>
+</html>
