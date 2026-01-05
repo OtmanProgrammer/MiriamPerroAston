@@ -42,11 +42,64 @@
             opacity: 1;
             transition: opacity 0.5s;
         }
+
+        /* Estilos para los botones de selección */
+        .controls {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 15px;
+            background-color: rgba(255, 255, 255, 0.8);
+            padding: 10px 20px;
+            border-radius: 50px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            pointer-events: auto; /* Para que los botones funcionen */
+        }
+
+        .toy-btn {
+            background: #fff;
+            border: 2px solid #D2B48C;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            font-size: 26px;
+            cursor: pointer;
+            transition: transform 0.2s, background 0.2s, border-color 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+            outline: none;
+        }
+
+        .toy-btn:hover {
+            transform: scale(1.1);
+            background: #FFF8DC;
+        }
+
+        .toy-btn.active {
+            background: #D2B48C;
+            border-color: #8B4513;
+            transform: scale(1.15);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        }
     </style>
 </head>
 <body>
 
-    <div id="inst" class="instructions">✋ Lanza el hueso lejos y el perro te lo traerá</div>
+    <div id="inst" class="instructions">✋ Lanza el juguete lejos y el perro te lo traerá</div>
+    
+    <!-- Controles para elegir juguete -->
+    <div class="controls" onmousedown="event.stopPropagation()" ontouchstart="event.stopPropagation()">
+        <button class="toy-btn active" onclick="setToy('bone')" title="Hueso">🦴</button>
+        <button class="toy-btn" onclick="setToy('ball')" title="Pelota">🎾</button>
+        <button class="toy-btn" onclick="setToy('frisbee')" title="Disco">🥏</button>
+        <button class="toy-btn" onclick="setToy('teddy')" title="Peluche">🧸</button>
+        <button class="toy-btn" onclick="setToy('book')" title="Libro">📖</button>
+    </div>
+
     <canvas id="gameCanvas"></canvas>
 
     <script>
@@ -56,7 +109,7 @@
 
         let width, height;
         let particles = []; 
-        let ripples = []; // Ondas de agua
+        let ripples = []; 
 
         const state = {
             dog: { 
@@ -68,21 +121,38 @@
                 hopTimer: 0, 
                 isMoving: false,
                 isSwimming: false,
-                wasSwimming: false, // Para detectar el momento de entrada
-                sinkFactor: 0, // Para transición suave de hundimiento (0 a 1)
+                wasSwimming: false, 
+                sinkFactor: 0, 
                 mode: 'IDLE' 
             },
-            ball: { x: 0, y: 0, vx: 0, vy: 0, size: 40 },
+            ball: { x: 0, y: 0, vx: 0, vy: 0, size: 45, rotation: 0 }, 
             mouse: { x: 0, y: 0 }, 
             isDragging: false,
+            currentToy: '🦴', // Emoji para otros juguetes
+            toyType: 'bone'   // Tipo de juguete para controlar el dibujo
+        };
+
+        // Función para cambiar de juguete
+        window.setToy = function(type) {
+            state.toyType = type; // Guardamos el tipo
             
-            // Lógica del mensaje secreto
-            throwCount: 0,
-            secretMode: {
-                active: false,
-                timer: 0,
-                alpha: 0
-            }
+            const toys = {
+                'bone': '🦴',
+                'ball': '🎾', // Este emoji ya no se usará para dibujar, solo referencia
+                'frisbee': '🥏',
+                'teddy': '🧸',
+                'book': '📖'
+            };
+            state.currentToy = toys[type];
+
+            // Actualizar botones visualmente
+            const buttons = document.querySelectorAll('.toy-btn');
+            buttons.forEach(btn => btn.classList.remove('active'));
+            buttons.forEach(btn => {
+                if(btn.getAttribute('onclick').includes(type)) {
+                    btn.classList.add('active');
+                }
+            });
         };
 
         function resize() {
@@ -118,10 +188,10 @@
             }
         }
 
-        // Event Listeners
         const startDrag = (e) => {
-            if (state.secretMode.active) return; // No interactuar durante el mensaje
-            
+            // Evitar drag si tocamos los controles (manejado por stopPropagation en el div, pero doble check)
+            if (e.target.closest('.controls')) return;
+
             const clientX = e.touches ? e.touches[0].clientX : e.clientX;
             const clientY = e.touches ? e.touches[0].clientY : e.clientY;
             const dx = clientX - state.ball.x;
@@ -144,39 +214,19 @@
             if (state.isDragging) {
                 state.isDragging = false; 
                 state.dog.mode = 'CHASING';
-                
-                // Limitar velocidad
                 state.ball.vx = Math.max(-25, Math.min(25, state.ball.vx));
                 state.ball.vy = Math.max(-25, Math.min(25, state.ball.vy));
-
-                // --- CONTADOR DE LANZAMIENTOS ---
-                state.throwCount++;
-                if (state.throwCount === 3) {
-                    // Activar secreto
-                    state.secretMode.active = true;
-                    state.secretMode.timer = 180; // ~3 segundos a 60fps
-                    state.secretMode.alpha = 0;
-                    state.throwCount = 0; // Resetear para que vuelva a salir a la 6ta vez (o dejarlo para que sea cíclico)
-                    inst.style.opacity = 0; // Ocultar instrucciones
-                }
             }
         };
         window.addEventListener('mouseup', endDrag);
         window.addEventListener('touchend', endDrag);
 
-        // --- CLASES Y DIBUJO ---
-
+        // --- CLASES ---
         class Ripple {
             constructor(x, y) {
-                this.x = x;
-                this.y = y;
-                this.size = 1;
-                this.life = 1.0;
+                this.x = x; this.y = y; this.size = 1; this.life = 1.0;
             }
-            update() {
-                this.size += 2; // Expansión
-                this.life -= 0.02; // Desvanecer
-            }
+            update() { this.size += 2; this.life -= 0.02; }
             draw(ctx) {
                 ctx.strokeStyle = `rgba(255, 255, 255, ${this.life * 0.5})`;
                 ctx.lineWidth = 2;
@@ -188,40 +238,29 @@
 
         class Particle {
             constructor(x, y, type = 'emotion') {
-                this.x = x;
-                this.y = y;
-                this.type = type;
-                this.life = 1.0;
-                
+                this.x = x; this.y = y; this.type = type; this.life = 1.0;
                 if (type === 'water') {
-                    // Gotas de agua (salpicadura)
                     this.vx = (Math.random() - 0.5) * 8;
                     this.vy = -Math.random() * 5 - 2;
                     this.radius = Math.random() * 3 + 1;
                     this.color = '#E0F7FA';
                 } else {
-                    // Emociones
                     this.vx = (Math.random() - 0.5) * 4;
                     this.vy = -Math.random() * 4 - 2;
-                    this.text = ['❤️', '🦴', 'Buen chico!'][Math.floor(Math.random() * 3)];
+                    // Emociones variadas
+                    const toySymbol = state.toyType === 'ball' ? '🎾' : state.currentToy;
+                    this.text = ['❤️', toySymbol, 'Buen chico!'][Math.floor(Math.random() * 3)];
                 }
             }
             update() {
-                this.x += this.vx;
-                this.y += this.vy;
-                this.life -= 0.03;
-                if(this.type === 'water') {
-                    this.vy += 0.25; // Gravedad
-                    this.life -= 0.01; // Duran un poco menos
-                }
+                this.x += this.vx; this.y += this.vy; this.life -= 0.03;
+                if(this.type === 'water') { this.vy += 0.25; this.life -= 0.01; }
             }
             draw(ctx) {
                 ctx.globalAlpha = Math.max(0, this.life);
                 if (this.type === 'water') {
                     ctx.fillStyle = this.color;
-                    ctx.beginPath();
-                    ctx.arc(this.x, this.y, this.radius, 0, Math.PI*2);
-                    ctx.fill();
+                    ctx.beginPath(); ctx.arc(this.x, this.y, this.radius, 0, Math.PI*2); ctx.fill();
                 } else {
                     ctx.font = 'bold 20px Arial';
                     ctx.fillStyle = '#000';
@@ -238,36 +277,22 @@
             const tanColor = '#C69C6D'; 
             const blackColor = '#2F2F2F';
             const cycleSpeed = isSwimming ? 0.5 : 1;
-            
-            // Patas: Si se está hundiendo, reducimos el movimiento de las patas visualmente
             const legAmp = isMoving ? 0.8 : 0;
             const legSwing = Math.sin(runCycle * cycleSpeed) * legAmp; 
             const legSwing2 = Math.sin(runCycle * cycleSpeed + Math.PI) * legAmp;
 
-            // Función auxiliar para patas
             function drawLeg(x, y, angle, color) {
                 ctx.save();
                 ctx.translate(x, y);
-                // Si nada, las patas rotan para "remar" (transición suave con sinkFactor)
                 const swimRotation = (Math.PI / 4) * sinkFactor; 
                 ctx.rotate(angle + swimRotation);
-                
                 ctx.fillStyle = color;
-                // Muslo
-                ctx.beginPath();
-                ctx.ellipse(0, 10, 8, 18, 0, 0, Math.PI * 2);
-                ctx.fill();
-                // Pata inferior
-                ctx.beginPath();
-                ctx.translate(0, 25);
+                ctx.beginPath(); ctx.ellipse(0, 10, 8, 18, 0, 0, Math.PI * 2); ctx.fill();
+                ctx.beginPath(); ctx.translate(0, 25);
                 ctx.rotate(isMoving ? -Math.abs(angle)*0.5 : 0); 
-                ctx.ellipse(0, 5, 6, 12, 0, 0, Math.PI * 2);
-                ctx.fill();
-                // Pie
-                ctx.beginPath();
-                ctx.fillStyle = blackColor;
-                ctx.ellipse(3, 15, 6, 4, 0, 0, Math.PI * 2);
-                ctx.fill();
+                ctx.ellipse(0, 5, 6, 12, 0, 0, Math.PI * 2); ctx.fill();
+                ctx.beginPath(); ctx.fillStyle = blackColor;
+                ctx.ellipse(3, 15, 6, 4, 0, 0, Math.PI * 2); ctx.fill();
                 ctx.restore();
             }
 
@@ -275,127 +300,108 @@
             const tailWag = Math.sin(runCycle * 4) * 0.4;
             ctx.save();
             ctx.translate(-35, -5);
-            // Transición de ángulo de cola al nadar
             const tailBaseAngle = -0.5 * (1 - sinkFactor) + (-0.2 * sinkFactor);
             ctx.rotate(tailBaseAngle + (isMoving ? tailWag : 0));
-            ctx.beginPath();
-            ctx.moveTo(0, 0);
-            ctx.quadraticCurveTo(-20, 10, -40, 5);
-            ctx.quadraticCurveTo(-20, -10, 0, -5);
-            ctx.fillStyle = blackColor;
-            ctx.fill();
+            ctx.beginPath(); ctx.moveTo(0, 0);
+            ctx.quadraticCurveTo(-20, 10, -40, 5); ctx.quadraticCurveTo(-20, -10, 0, -5);
+            ctx.fillStyle = blackColor; ctx.fill();
             ctx.restore();
 
-            // Patas traseras (Lejanas)
             drawLeg(-25, 5, legSwing2, tanColor);
-            // Patas delanteras (Lejanas)
             drawLeg(25, 5, legSwing, tanColor);
 
             // Cuerpo
             ctx.save();
-            // Inclinación del cuerpo al nadar
             ctx.rotate(-0.1 * sinkFactor);
-            ctx.beginPath();
-            ctx.ellipse(0, -5, 40, 22, 0, 0, Math.PI * 2);
-            ctx.fillStyle = tanColor;
-            ctx.fill();
-            // Silla negra
-            ctx.beginPath();
-            ctx.ellipse(0, -12, 30, 15, 0, 0, Math.PI * 2);
-            ctx.fillStyle = blackColor;
-            ctx.fill();
+            ctx.beginPath(); ctx.ellipse(0, -5, 40, 22, 0, 0, Math.PI * 2);
+            ctx.fillStyle = tanColor; ctx.fill();
+            ctx.beginPath(); ctx.ellipse(0, -12, 30, 15, 0, 0, Math.PI * 2);
+            ctx.fillStyle = blackColor; ctx.fill();
 
             // Cabeza
             ctx.save();
             ctx.translate(35, -20); 
-            // Levantar cabeza al nadar
             const headAngle = -0.2 * (1 - sinkFactor) + (-0.5 * sinkFactor);
             ctx.rotate(headAngle); 
             
-            // Cuello
-            ctx.beginPath();
-            ctx.moveTo(-10, 10);
-            ctx.lineTo(-5, -15);
-            ctx.lineTo(15, -15);
-            ctx.lineTo(15, 10);
-            ctx.fillStyle = tanColor;
-            ctx.fill();
-            // Cráneo
-            ctx.beginPath();
-            ctx.arc(5, -15, 18, 0, Math.PI*2);
-            ctx.fillStyle = tanColor;
-            ctx.fill();
+            ctx.beginPath(); ctx.moveTo(-10, 10); ctx.lineTo(-5, -15); ctx.lineTo(15, -15); ctx.lineTo(15, 10);
+            ctx.fillStyle = tanColor; ctx.fill();
+            ctx.beginPath(); ctx.arc(5, -15, 18, 0, Math.PI*2); ctx.fillStyle = tanColor; ctx.fill();
             // Orejas
-            ctx.beginPath();
-            ctx.moveTo(-5, -25); ctx.lineTo(-2, -45); ctx.lineTo(10, -28); ctx.fill();
-            ctx.beginPath();
-            ctx.moveTo(5, -28); ctx.lineTo(15, -45); ctx.lineTo(18, -25); ctx.fill();
+            ctx.beginPath(); ctx.moveTo(-5, -25); ctx.lineTo(-2, -45); ctx.lineTo(10, -28); ctx.fill();
+            ctx.beginPath(); ctx.moveTo(5, -28); ctx.lineTo(15, -45); ctx.lineTo(18, -25); ctx.fill();
             ctx.fillStyle = '#444'; 
-            ctx.beginPath();
-            ctx.moveTo(0, -28); ctx.lineTo(-2, -40); ctx.lineTo(5, -30); ctx.fill();
+            ctx.beginPath(); ctx.moveTo(0, -28); ctx.lineTo(-2, -40); ctx.lineTo(5, -30); ctx.fill();
             // Hocico
             ctx.fillStyle = blackColor;
-            ctx.beginPath();
-            ctx.moveTo(15, -15); ctx.lineTo(32, -12); ctx.lineTo(30, -5); ctx.lineTo(15, -5); ctx.fill();
+            ctx.beginPath(); ctx.moveTo(15, -15); ctx.lineTo(32, -12); ctx.lineTo(30, -5); ctx.lineTo(15, -5); ctx.fill();
             ctx.fillStyle = '#000';
-            ctx.beginPath();
-            ctx.arc(32, -14, 3, 0, Math.PI*2); ctx.fill();
-            // Ojo
+            ctx.beginPath(); ctx.arc(32, -14, 3, 0, Math.PI*2); ctx.fill();
             ctx.fillStyle = 'white';
             ctx.beginPath(); ctx.arc(12, -20, 4, 0, Math.PI*2); ctx.fill();
             ctx.fillStyle = 'black';
             ctx.beginPath(); ctx.arc(13, -20, 1.5, 0, Math.PI*2); ctx.fill();
 
-            // HUESO EN LA BOCA
+            // JUGUETE EN LA BOCA
             if (hasBone) {
                 ctx.save();
                 ctx.translate(25, -8); 
                 ctx.rotate(0.2);
-                ctx.font = '30px Arial';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText('🦴', 0, 0);
+                
+                // Si es la pelota, la dibujamos manualmente
+                if (state.toyType === 'ball') {
+                    const r = (state.ball.size / scale) / 2; // Radio ajustado a la escala
+                    
+                    // Base pelota
+                    ctx.beginPath();
+                    ctx.arc(0, 0, r, 0, Math.PI * 2);
+                    ctx.fillStyle = '#CCFF00'; // Verde Tenis brillante
+                    ctx.fill();
+                    ctx.strokeStyle = '#99CC00';
+                    ctx.lineWidth = 1;
+                    ctx.stroke();
+
+                    // Líneas blancas de la pelota
+                    ctx.strokeStyle = 'white';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.arc(r/1.5, 0, r/1.5, Math.PI, 3*Math.PI); // Curva 1
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.arc(-r/1.5, 0, r/1.5, 0, 2*Math.PI); // Curva 2
+                    ctx.stroke();
+
+                } else {
+                    // Resto de juguetes (Emojis: Hueso, Libro, etc)
+                    const adjustedSize = state.ball.size / scale; 
+                    ctx.font = `${adjustedSize}px Arial`; 
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(state.currentToy, 0, 0);
+                }
                 ctx.restore();
             }
 
-            ctx.restore(); // Fin cabeza
-            ctx.restore(); // Fin cuerpo
-
-            // Patas traseras (Cercanas)
+            ctx.restore(); 
+            ctx.restore(); 
             drawLeg(-25, 5, legSwing, tanColor);
-            // Patas delanteras (Cercanas)
             drawLeg(25, 5, legSwing2, tanColor);
-            
             ctx.restore();
         }
 
         // --- BUCLE PRINCIPAL ---
 
         function update() {
-            // --- LÓGICA DEL MENSAJE SECRETO ---
-            if (state.secretMode.active) {
-                // Fade in
-                if (state.secretMode.alpha < 1) state.secretMode.alpha += 0.05;
-                state.secretMode.timer--;
-                
-                // Cuando acaba el tiempo
-                if (state.secretMode.timer <= 0) {
-                    // Fade out
-                    state.secretMode.active = false; // Desactivar lógica
-                    // El alpha bajará visualmente en el draw si lo manejamos allí,
-                    // pero para simplificar, cortamos aquí y restauramos UI
-                    inst.style.opacity = 1;
-                }
-                return; // PAUSAR EL JUEGO MIENTRAS SALE EL MENSAJE
-            }
-
-            const skyLine = height * 0.3;   
+            const skyLine = height * 0.3;    
             const sandLine = height * 0.6;  
 
-            // --- FÍSICA BOLA ---
+            // --- FÍSICA JUGUETE ---
             if (!state.isDragging && state.dog.mode !== 'RETURNING') {
                 state.ball.x += state.ball.vx;
                 state.ball.y += state.ball.vy;
+                
+                // Rotación simple basada en la velocidad X
+                state.ball.rotation += state.ball.vx * 0.05;
 
                 if (state.ball.x < state.ball.size || state.ball.x > width - state.ball.size) {
                     state.ball.vx *= -0.7;
@@ -419,31 +425,24 @@
             }
 
             // --- IA PERRO ---
-            // Detectar estado de natación
             const inWater = state.dog.y < sandLine;
             state.dog.isSwimming = inWater;
 
-            // Transición suave de hundimiento (sinkFactor)
-            // Si está en agua, factor tiende a 1, si no a 0
             if (inWater) {
                 if (state.dog.sinkFactor < 1) state.dog.sinkFactor += 0.05;
             } else {
                 if (state.dog.sinkFactor > 0) state.dog.sinkFactor -= 0.05;
             }
 
-            // DETECCIÓN DE ENTRADA AL AGUA (CHAPUZÓN)
             if (inWater && !state.dog.wasSwimming) {
-                // Acaba de entrar -> Splash!
                 for(let i=0; i<10; i++) particles.push(new Particle(state.dog.x, state.dog.y + 20, 'water'));
                 ripples.push(new Ripple(state.dog.x, state.dog.y + 20));
             }
             state.dog.wasSwimming = inWater;
 
-            // Generar ondas periódicas si nada
             if (inWater && state.dog.isMoving && Math.floor(Date.now() / 100) % 5 === 0) {
                  ripples.push(new Ripple(state.dog.x, state.dog.y + 15));
             }
-
 
             let targetX = state.dog.x;
             let targetY = state.dog.y;
@@ -461,20 +460,21 @@
                 targetY = state.mouse.y;
                 state.ball.x = state.dog.x; 
                 state.ball.y = state.dog.y; 
+                state.ball.rotation = 0; // Reset rotación al recoger
                 if (Math.hypot(state.mouse.x - state.dog.x, state.mouse.y - state.dog.y) < 60) {
                     state.dog.mode = 'IDLE';
                     state.ball.x = state.dog.x;
                     state.ball.y = state.dog.y + 20; 
                     state.ball.vx = 0;
                     state.ball.vy = 0;
-                    particles.push(new Particle(state.dog.x, state.dog.y - 40, 'heart'));
+                    particles.push(new Particle(state.dog.x, state.dog.y - 40, 'emotion'));
                 }
             }
             else { // IDLE
                 const distToMaster = Math.hypot(state.mouse.x - state.dog.x, state.mouse.y - state.dog.y);
                 if (distToMaster > 150) {
-                     targetX = state.mouse.x;
-                     targetY = state.mouse.y;
+                      targetX = state.mouse.x;
+                      targetY = state.mouse.y;
                 } else {
                     targetX = state.dog.x; 
                     targetY = state.dog.y;
@@ -492,7 +492,7 @@
                 const angle = Math.atan2(dy, dx);
                 let speed = state.dog.speed;
                 if (state.dog.mode === 'IDLE') speed *= 0.3; 
-                if (inWater) speed *= 0.6;      
+                if (inWater) speed *= 0.6;       
                 
                 state.dog.x += Math.cos(angle) * speed;
                 state.dog.y += Math.sin(angle) * speed;
@@ -501,16 +501,10 @@
                 if (state.dog.y > height - 20) state.dog.y = height - 20;
 
                 state.dog.hopTimer += 0.2;
-                
-                // Animación de saltito interpolada por sinkFactor
-                // En tierra (-10 amp), en agua (2 amp suave)
                 const waterBounce = Math.sin(state.dog.hopTimer) * 2;
                 const landBounce = Math.abs(Math.sin(state.dog.hopTimer)) * -10;
                 state.dog.yOffset = landBounce * (1 - state.dog.sinkFactor) + waterBounce * state.dog.sinkFactor;
-
                 state.dog.flip = dx < 0;
-
-                // Salpicaduras al moverse en agua
                 if (inWater && Math.random() < 0.2) {
                     particles.push(new Particle(state.dog.x, state.dog.y + 20, 'water'));
                 }
@@ -520,7 +514,6 @@
                 state.dog.hopTimer = 0;
             }
 
-            // Update efectos
             particles.forEach((p, i) => {
                 p.update();
                 if(p.life <= 0) particles.splice(i,1);
@@ -534,7 +527,6 @@
         function draw() {
             ctx.clearRect(0, 0, width, height);
 
-            // --- PAISAJE ---
             const skyLine = height * 0.3;
             const sandLine = height * 0.6;
 
@@ -559,20 +551,28 @@
             ctx.beginPath(); ctx.arc(width - 80, 80, 40, 0, Math.PI * 2); ctx.fill();
             ctx.restore();
 
-            // Sombra (se desvanece si sinkFactor aumenta)
+            // MENSAJE AMOROSO DEL LIBRO
+            if (state.toyType === 'book') {
+                ctx.save();
+                ctx.font = 'italic bold 30px "Times New Roman", serif';
+                ctx.textAlign = 'center';
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.4)'; // Sombra suave
+                ctx.fillText('"Mi-e dor de tine"', width/2 + 2, height/2 + 2);
+                ctx.fillStyle = '#4B0082'; // Color Índigo elegante
+                ctx.fillText('"Mi-e dor de tine"', width/2, height/2);
+                ctx.restore();
+            }
+
+            // Sombra perro
             ctx.fillStyle = `rgba(0,0,0,${0.15 * (1 - state.dog.sinkFactor)})`; 
             ctx.beginPath(); ctx.ellipse(state.dog.x, state.dog.y + 35, 40, 10, 0, 0, Math.PI*2); ctx.fill();
             
-            // Ondas de agua (Debajo del perro)
             ripples.forEach(r => r.draw(ctx));
 
-            // --- PERRO ---
+            // Perro
             ctx.save();
-            // Offset visual de hundimiento interpolado
-            // En tierra 0, en agua +15
             let sinkY = 15 * state.dog.sinkFactor;
             let drawY = state.dog.y + state.dog.yOffset + sinkY;
-
             ctx.translate(state.dog.x, drawY);
             if (state.dog.flip) ctx.scale(-1, 1);
             
@@ -580,92 +580,79 @@
             drawGermanShepherd(ctx, state.dog.size, state.dog.hopTimer, state.dog.isMoving, state.dog.isSwimming, hasBone, state.dog.sinkFactor);
             ctx.restore();
 
-            // Agua (Overlay Mejorado) - Interpolado
+            // Overlay Agua
             if (state.dog.sinkFactor > 0.05) {
                 ctx.save();
-                
-                // 1. CLIP: Asegurar que el agua NUNCA toque la arena
-                // Definimos la región permitida (solo el mar, de 0 a sandLine)
-                ctx.beginPath();
-                ctx.rect(0, 0, width, sandLine);
-                ctx.clip();
-
+                ctx.beginPath(); ctx.rect(0, 0, width, sandLine); ctx.clip();
                 ctx.globalAlpha = state.dog.sinkFactor; 
-
-                // 2. GRADIENTE: Simular profundidad (transparente arriba -> azul oscuro abajo)
-                // El gradiente es relativo a la posición del perro
                 const waterGrad = ctx.createLinearGradient(0, state.dog.y - 10, 0, state.dog.y + 40);
-                waterGrad.addColorStop(0, 'rgba(30, 144, 255, 0.0)'); // Arriba transparente
-                waterGrad.addColorStop(0.4, 'rgba(30, 144, 255, 0.3)'); // Medio azulado
-                waterGrad.addColorStop(1, 'rgba(0, 60, 150, 0.6)');    // Fondo oscuro (profundidad)
-
+                waterGrad.addColorStop(0, 'rgba(30, 144, 255, 0.0)');
+                waterGrad.addColorStop(0.4, 'rgba(30, 144, 255, 0.3)');
+                waterGrad.addColorStop(1, 'rgba(0, 60, 150, 0.6)');    
                 ctx.fillStyle = waterGrad;
-
-                // 3. FORMA: Elipse en lugar de rectangulo
-                ctx.beginPath();
-                // Una elipse que cubre la parte sumergida del cuerpo
-                ctx.ellipse(state.dog.x, state.dog.y + 15, 55, 35, 0, 0, Math.PI*2);
-                ctx.fill();
-
-                // Anillo de corte agua/cuerpo (Ondas de superficie)
+                ctx.beginPath(); ctx.ellipse(state.dog.x, state.dog.y + 15, 55, 35, 0, 0, Math.PI*2); ctx.fill();
                 ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)'; 
                 ctx.lineWidth = 2;
-                ctx.beginPath(); 
-                // Arco suave alrededor del cuerpo
-                ctx.ellipse(state.dog.x, state.dog.y + 15, 50, 12, 0, 0, Math.PI*2); 
-                ctx.stroke();
-
-                ctx.restore(); // Restaurar para quitar el clip y seguir dibujando normal
+                ctx.beginPath(); ctx.ellipse(state.dog.x, state.dog.y + 15, 50, 12, 0, 0, Math.PI*2); ctx.stroke();
+                ctx.restore(); 
             }
 
-            // --- HUESO (SUELTO) ---
+            // --- JUGUETE (SUELTO) ---
             if (state.dog.mode !== 'RETURNING') {
                 ctx.save();
                 ctx.translate(state.ball.x, state.ball.y);
-                // Hundimiento hueso
+                // Sombra
                 if (state.ball.y < sandLine) {
-                     ctx.fillStyle = 'rgba(30, 144, 255, 0.3)';
-                     ctx.beginPath(); ctx.ellipse(0, 10, state.ball.size/2 + 5, 10, 0, 0, Math.PI*2); ctx.fill();
+                      ctx.fillStyle = 'rgba(30, 144, 255, 0.3)';
+                      ctx.beginPath(); ctx.ellipse(0, 10, state.ball.size/2 + 5, 10, 0, 0, Math.PI*2); ctx.fill();
                 } else {
-                     ctx.fillStyle = 'rgba(0,0,0,0.15)';
-                     ctx.beginPath(); ctx.ellipse(0, state.ball.size/2 + 5, state.ball.size/2, 10, 0, 0, Math.PI*2); ctx.fill();
+                      ctx.fillStyle = 'rgba(0,0,0,0.15)';
+                      ctx.beginPath(); ctx.ellipse(0, state.ball.size/2 + 5, state.ball.size/2, 10, 0, 0, Math.PI*2); ctx.fill();
                 }
-                ctx.font = `${state.ball.size}px Arial`;
-                ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-                ctx.fillText('🦴', 0, 0);
+                
+                // Rotar juguete al lanzarlo
+                ctx.rotate(state.ball.rotation);
+
+                // DIBUJAR JUGUETE
+                if (state.toyType === 'ball') {
+                    // DIBUJO MANUAL DE PELOTA DE TENIS
+                    const r = state.ball.size / 2;
+                    
+                    // Círculo base
+                    ctx.beginPath();
+                    ctx.arc(0, 0, r, 0, Math.PI * 2);
+                    ctx.fillStyle = '#CCFF00'; // Verde Tenis
+                    ctx.fill();
+                    
+                    // Borde sutil
+                    ctx.strokeStyle = '#99CC00';
+                    ctx.lineWidth = 1;
+                    ctx.stroke();
+
+                    // Costuras blancas
+                    ctx.strokeStyle = 'white';
+                    ctx.lineWidth = 3;
+                    
+                    ctx.beginPath();
+                    ctx.arc(r/1.5, 0, r/1.5, 0.5 * Math.PI, 1.5 * Math.PI, true); 
+                    ctx.stroke();
+                    
+                    ctx.beginPath();
+                    ctx.arc(-r/1.5, 0, r/1.5, 1.5 * Math.PI, 0.5 * Math.PI, true);
+                    ctx.stroke();
+
+                } else {
+                    // EMOJIS (Hueso, Frisbee, Peluche, Libro)
+                    ctx.fillStyle = 'black'; 
+                    ctx.font = `${state.ball.size}px Arial`;
+                    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                    ctx.fillText(state.currentToy, 0, 0);
+                }
+                
                 ctx.restore();
             }
 
             particles.forEach(p => p.draw(ctx));
-
-            // --- DIBUJO MENSAJE SECRETO (NEGRO Y BLANCO) ---
-            if (state.secretMode.active || state.secretMode.alpha > 0) {
-                // Si ya no está activo pero alpha > 0, es que estamos en fade out
-                if (!state.secretMode.active && state.secretMode.alpha > 0) state.secretMode.alpha -= 0.05;
-
-                ctx.save();
-                ctx.globalAlpha = state.secretMode.alpha;
-                
-                // Fondo oscuro
-                ctx.fillStyle = 'rgba(0,0,0,0.9)';
-                ctx.fillRect(0, 0, width, height);
-                
-                // Configuración de Texto
-                ctx.font = 'italic bold 70px "Times New Roman", serif'; 
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                
-                // 1. Borde Blanco (Para resaltar el negro)
-                ctx.lineWidth = 4;
-                ctx.strokeStyle = '#FFFFFF';
-                ctx.strokeText("Mi-e dor de tine", width/2, height/2);
-
-                // 2. Relleno Negro
-                ctx.fillStyle = '#000000'; 
-                ctx.fillText("Mi-e dor de tine", width/2, height/2);
-                
-                ctx.restore();
-            }
 
             requestAnimationFrame(updateAndDraw);
         }
