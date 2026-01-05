@@ -184,7 +184,21 @@
                 state.ball.vx = (clientX - state.ball.x) * 0.2;
                 state.ball.vy = (clientY - state.ball.y) * 0.2;
                 state.ball.x = clientX;
-                state.ball.y = clientY;
+                
+                // LÍMITE DE ARRASTRE PARA NO ENTRAR EN LA BARRA
+                // Definimos la caja de la UI
+                const uiWidth = 380; // Ancho aproximado de la barra
+                const uiHeight = 110; // Alto aproximado desde abajo
+                const uiTop = height - uiHeight;
+                
+                // Si estamos en la zona horizontal de la barra...
+                if (state.ball.x > width/2 - uiWidth/2 && state.ball.x < width/2 + uiWidth/2) {
+                    // ...limitamos la altura (Y) para que no baje más de la cuenta
+                    // Restamos un poco (25) para que el centro del objeto no toque el borde
+                    state.ball.y = Math.min(clientY, uiTop - 25); 
+                } else {
+                    state.ball.y = clientY;
+                }
             }
         }
 
@@ -403,16 +417,34 @@
                 // Rotación simple basada en la velocidad X
                 state.ball.rotation += state.ball.vx * 0.05;
 
+                // REBOTES PAREDES LATERALES
                 if (state.ball.x < state.ball.size || state.ball.x > width - state.ball.size) {
                     state.ball.vx *= -0.7;
                     state.ball.x = Math.max(state.ball.size, Math.min(state.ball.x, width - state.ball.size));
                 }
+
+                // REBOTE TECHO Y SUELO
                 if (state.ball.y < skyLine + state.ball.size/2) {
                     state.ball.vy *= -0.7;
                     state.ball.y = skyLine + state.ball.size/2;
-                } else if (state.ball.y > height - state.ball.size) {
-                    state.ball.vy *= -0.7;
-                    state.ball.y = height - state.ball.size;
+                } 
+                
+                // LÓGICA DE COLISIÓN CON LA BARRA DE OBJETOS
+                const uiWidth = 380; 
+                const uiHeight = 110; 
+                const uiTop = height - uiHeight;
+                
+                // Chequeo si está sobre la barra
+                const overUI = state.ball.x > width/2 - uiWidth/2 && state.ball.x < width/2 + uiWidth/2;
+                
+                // Límite dinámico: Si está sobre la UI, el suelo es más alto. Si no, es el fondo de pantalla.
+                const floorLimit = overUI ? (uiTop - state.ball.size/2) : (height - state.ball.size);
+
+                if (state.ball.y > floorLimit) {
+                    state.ball.vy *= -0.7; // Rebote
+                    state.ball.y = floorLimit;
+                    // Fricción extra si rueda sobre la barra
+                    if (overUI) state.ball.vx *= 0.9;
                 }
                 
                 let friction = 0.98;
